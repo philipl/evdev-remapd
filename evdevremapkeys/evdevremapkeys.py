@@ -41,31 +41,48 @@ registered_devices = {}
 
 
 @asyncio.coroutine
-async def handle_events(input, output, remappings, modifier_groups):
+async def handle_events(input, output, remappings, modifier_groups, bouncekeys):
     active_group = {}
+    last_key = None
+    last_timestamp = None
     try:
         while True:
             async for event in input.async_read_loop():
+                code = event.code
+                key_down = event.value == 1
+                key_up = event.value == 0
+
                 if not active_group:
                     active_mappings = remappings
                 else:
                     active_mappings = modifier_groups[active_group['name']]
 
-                if (event.code == active_group.get('code') or
-                        (event.code in active_mappings and
-                         'modifier_group' in active_mappings.get(event.code)[0])):
-                    if event.value == 1:
+                if (code == active_group.get('code') or
+                        (code in active_mappings and
+                         'modifier_group' in active_mappings.get(code)[0])):
+                    if key_down:
                         active_group['name'] = \
-                            active_mappings[event.code][0]['modifier_group']
-                        active_group['code'] = event.code
-                    elif event.value == 0:
+                            active_mappings[code][0]['modifier_group']
+                        active_group['code'] = code
+                    elif key_up:
                         active_group = {}
                 else:
-                    if event.code in active_mappings:
-                        remap_event(output, event, active_mappings[event.code])
-                    else:
-                        output.write_event(event)
-                        output.syn()
+                    ignore_event = False
+                    if bouncekeys is not None:
+                        now = event.timestamp()
+                        if key_down:
+                            if code != ecodes.KEY_RESERVED and \
+                                    code == last_key and \
+                                    now - last_timestamp < bouncekeys:
+                                ignore_event = True
+                            last_key = code
+                            last_timestamp = now
+                    if not ignore_event:
+                        if code in active_mappings:
+                            remap_event(output, event, active_mappings[code])
+                        else:
+                            output.write_event(event)
+                            output.syn()
     except Exception as e:
         del registered_devices[input.path]
         print('Unregistered: %s, %s, %s' % (input.name, input.path, input.phys),
@@ -294,6 +311,8 @@ def register_device(device):
     if 'modifier_groups' in device:
         modifier_groups = device['modifier_groups']
 
+    bouncekeys = device['bouncekeys'] if 'bouncekeys' in device else None
+
     def flatmap(lst):
         return [l2 for l1 in lst for l2 in l1]
 
@@ -310,7 +329,7 @@ def register_device(device):
     output = UInput(caps, name=device['output_name'])
     print('Registered: %s, %s, %s' % (input.name, input.path, input.phys), flush=True)
     future = asyncio.ensure_future(
-        handle_events(input, output, remappings, modifier_groups))
+        handle_events(input, output, remappings, modifier_groups, bouncekeys))
     registered_devices[input.path] = {
         'future': future,
         'device': device,
