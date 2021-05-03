@@ -86,11 +86,13 @@ async def repeat_event(event, rate, count, values, output):
 
 
 def remap_event(output, event, event_remapping):
+    original_type = event.type
+    original_value = event.value
+    original_code = event.code
     for remapping in event_remapping:
-        original_code = event.code
         event.code = remapping['code']
-        event.type = remapping.get('type', None) or event.type
-        values = remapping.get('value', None) or [event.value]
+        event.type = remapping.get('type', None) or original_type
+        values = remapping.get('value', None) or [original_value]
         repeat = remapping.get('repeat', False)
         delay = remapping.get('delay', False)
         if not repeat and not delay:
@@ -306,7 +308,7 @@ def register_device(device, loop: AbstractEventLoop):
                 extended.update([remapping['code']])
 
     caps[ecodes.EV_KEY] = list(extended)
-    output = UInput(caps, name=device['output_name'])
+    output = UInput(caps, input_props=input.input_props(), name=device['output_name'])
     print('Registered: %s, %s, %s' % (input.name, input.path, input.phys), flush=True)
     task = loop.create_task(
         handle_events(input, output, remappings, modifier_groups),
